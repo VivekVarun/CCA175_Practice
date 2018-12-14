@@ -1,0 +1,142 @@
+/*
+Instructions
+Get the customers who have not placed any orders, sorted by customer_lname and then customer_fname
+
+Data Description
+Data is available in local file system /data/retail_db
+
+retail_db information:
+
+Source directories: /data/retail_db/orders and /data/retail_db/customers
+Source delimiter: comma(",")
+Source Columns - orders - order_id, order_date, order_customer_id, order_status
+Source Columns - customers - customer_id, customer_fname, customer_lname and many more
+Output Requirements
+Target Columns: customer_lname, customer_fname
+Number of Files: 1
+Place the output file in the HDFS directory
+/user/`whoami`/problem2/solution/
+Replace `whoami` with your OS user name
+File format should be text
+delimiter is (",")
+Compression: Uncompressed
+
+*/
+
+// using RDD 
+
+// Launch spark shell 
+spark-shell --master yarn --conf spark.ui.port=25585 --num-executors 2 --executor-memory 1G --executor-cores 2
+sc.setLogLevel("ERROR")
+
+import scala.io.Source._
+
+
+
+
+val customers = sc.parallelize(fromFile("/data/retail_db/customers/part-00000").getLines.toList)
+val orders = sc.parallelize(fromFile("/data/retail_db/orders/part-00000").getLines.toList)
+
+customers.take(10).foreach(println)
+orders.take(10).foreach(println)
+
+val customersRDD = customers.map(rec => {
+  val v = rec.split(',')
+  (v(0), (v(2), v(1)))
+})
+
+val ordersRDD = orders.map(rec => {
+  val v = rec.split(',')
+  (v(2), v(0))
+})
+
+customersRDD.take(10).foreach(println)
+ordersRDD.take(10).foreach(println)
+
+
+val customerLeftOuterJoinOrders = customersRDD.leftOuterJoin(ordersRDD)
+
+customerLeftOuterJoinOrders.take(10).foreach(println)
+
+val customerWithoutOrdersRaw = customerLeftOuterJoinOrders.filter(_._2._2 == None)
+
+val customerWithoutOrders = customerWithoutOrdersRaw.map(x => ( x._2._1, x._1)).sortByKey().map(_._1).map(x => x._1 + "," + x._2)
+
+customerWithoutOrders.take(10).foreach(println)
+
+customerWithoutOrders.coalesce(1).saveAsTextFile("/user/vivekvarun20/problem2/solution/")
+
+/////////////////////////////////////////////////////////////////////////////
+
+//using Dataframe
+
+
+val customers = sc.parallelize(fromFile("/data/retail_db/customers/part-00000").getLines.toList)
+val orders = sc.parallelize(fromFile("/data/retail_db/orders/part-00000").getLines.toList)
+
+customers.take(10).foreach(println)
+orders.take(10).foreach(println)
+
+val customersRDD = customers.map(rec => {
+  val v = rec.split(',')
+  (v(0), (v(2), v(1)))
+})
+
+val ordersRDD = orders.map(rec => {
+  val v = rec.split(',')
+  (v(2), v(0))
+})
+
+customersRDD.take(10).foreach(println)
+ordersRDD.take(10).foreach(println)
+
+val customersDF = customersRDD.map(x => (x._1, x._2._1, x._2._2)).toDF("customer_id", "customer_lname", "customer_fname")
+
+val ordersDF = ordersRDD.toDF("order_customer_id", "order_id")
+
+
+val customerLeftOuterJoinOrdersDF = customersDF.join(ordersDF, customersDF.col("customer_id") === ordersDF.col("order_customer_id"), "left_outer")
+
+
+val customersWithoutOrders = customerLeftOuterJoinOrdersDF.filter($"order_id".isNull).select($"customer_lname", $"customer_fname").orderBy($"customer_lname", $"customer_fname")
+
+//hdfs dfs -rm -R /user/vivekvarun20/problem2/solution/
+
+customersWithoutOrders.map(_.mkString(",")).coalesce(1).saveAsTextFile("/user/vivekvarun20/problem2/solution/")
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Using SparkSQL
+
+
+val customers = sc.parallelize(fromFile("/data/retail_db/customers/part-00000").getLines.toList)
+val orders = sc.parallelize(fromFile("/data/retail_db/orders/part-00000").getLines.toList)
+
+customers.take(10).foreach(println)
+orders.take(10).foreach(println)
+
+val customersRDD = customers.map(rec => {
+  val v = rec.split(',')
+  (v(0), (v(2), v(1)))
+})
+
+val ordersRDD = orders.map(rec => {
+  val v = rec.split(',')
+  (v(2), v(0))
+})
+
+customersRDD.take(10).foreach(println)
+ordersRDD.take(10).foreach(println)
+
+val customersDF = customersRDD.map(x => (x._1, x._2._1, x._2._2)).toDF("customer_id", "customer_lname", "customer_fname")
+
+val ordersDF = ordersRDD.toDF("order_customer_id", "order_id")
+
+
+customersDF.registerTempTable("CUSTOMERS")
+ordersDF.registerTempTable("ORDERS")
+
+val resultsDF = sqlContext.sql("SELECT customer_lname, customer_fname FROM CUSTOMERS C LEFT OUTER JOIN ORDERS O ON C.customer_id = O.order_customer_id WHERE order_id IS NULL ORDER BY customer_lname, customer_fname")
+
+
+resultsDF.map(_.mkString(",")).coalesce(1).saveAsTextFile("/user/vivekvarun20/problem2/solution/")
